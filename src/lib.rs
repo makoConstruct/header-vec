@@ -1,8 +1,11 @@
 #![no_std]
+#![feature(allocator_api)]
 
 extern crate alloc;
 
 use core::{
+    ptr::NonNull,
+    alloc::Allocator,
     cmp,
     fmt::Debug,
     marker::PhantomData,
@@ -167,26 +170,36 @@ impl<H, T> HeaderVec<H, T> {
         // Set the new capacity.
         self.header_mut().capacity = new_capacity;
         // Reallocate the pointer.
-        let ptr = unsafe {
-            alloc::alloc::realloc(
-                self.ptr as *mut u8,
+        let memory = unsafe {
+            alloc::alloc::Global::default().grow(
+                NonNull::new(self.ptr as *mut u8).unwrap(),
                 Self::layout(old_capacity),
-                Self::elems_to_mem_bytes(new_capacity),
-            ) as *mut T
+                Self::layout(new_capacity)
+            )
+            // alloc::alloc::realloc(
+            //     self.ptr as *mut u8,
+            //     Self::layout(old_capacity),
+            //     Self::elems_to_mem_bytes(new_capacity),
+            // ) as *mut T
         };
         // Handle out-of-memory.
-        if ptr.is_null() {
-            alloc::alloc::handle_alloc_error(Self::layout(new_capacity));
-        }
+        let ptr = match memory {
+            Ok(np)=> {
+                np
+            }
+            Err(_)=> {
+                alloc::alloc::handle_alloc_error(Self::layout(new_capacity));
+            }
+        };
         // Check if the new pointer is different than the old one.
-        let previous_pointer = if ptr != self.ptr {
+        let previous_pointer = if ptr.as_ptr() as *mut u8 != self.ptr as *mut u8 {
             // Give the user the old pointer so they can update everything.
             Some(self.ptr as *const ())
         } else {
             None
         };
         // Assign the new pointer.
-        self.ptr = ptr;
+        self.ptr = ptr.as_ptr() as *mut T;
 
         previous_pointer
     }
